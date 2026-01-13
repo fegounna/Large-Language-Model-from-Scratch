@@ -104,18 +104,14 @@ class RotaryPositionalEmbedding(nn.Module):
         self.max_seq_len = max_seq_len
 
         idx = torch.arange(0, head_dim, 2, device=device, dtype=torch.float32)
-        inv_freq = 1.0 / (self.theta ** (idx / head_dim))       # [D/2]
+        inv_freq = 1.0 / (self.theta ** (idx / head_dim))  # [D/2]
 
         positions = torch.arange(max_seq_len, device=device, dtype=torch.float32)
 
         angles = torch.einsum("s,d->sd", positions, inv_freq)
 
-        self.register_buffer(
-            "cos", torch.cos(angles).to(dtype=dtype), persistent=False
-        )
-        self.register_buffer(
-            "sin", torch.sin(angles).to(dtype=dtype), persistent=False
-        )
+        self.register_buffer("cos", torch.cos(angles).to(dtype=dtype), persistent=False)
+        self.register_buffer("sin", torch.sin(angles).to(dtype=dtype), persistent=False)
 
     def forward(self, x: torch.Tensor, start_pos: int = 0) -> torch.Tensor:
         """x : batch,number_heads,seq_len,dim_head
@@ -129,9 +125,8 @@ class RotaryPositionalEmbedding(nn.Module):
 
         seq_len = x.shape[-2]
         cos = self.cos[start_pos : start_pos + seq_len].view(1, 1, seq_len, -1)
-    
+
         sin = self.sin[start_pos : start_pos + seq_len].view(1, 1, seq_len, -1)
-        
 
         x_even = x[..., 0::2]
         x_odd = x[..., 1::2]
