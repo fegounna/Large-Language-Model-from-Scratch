@@ -166,6 +166,7 @@ class MultiHeadSelfAttention(nn.Module):
         d_model: int,
         num_heads: int,
         max_len_seq: int,
+        num_kv_heads: int | None = None,
         causal: bool = False,
         device=None,
         dtype=None,
@@ -173,19 +174,29 @@ class MultiHeadSelfAttention(nn.Module):
         super().__init__()
         assert d_model % num_heads == 0
 
+        self.num_kv_heads = num_kv_heads if num_kv_heads is not None else num_heads
+        assert num_heads % self.num_kv_heads == 0, (
+            "num_heads must be divisible by num_kv_heads"
+        )
+        self.num_groups = num_heads // self.num_kv_heads
+
         self.d_model = d_model
         self.num_heads = num_heads
         self.dim_head = d_model // num_heads
         self.max_len_seq = max_len_seq
 
         self.w_q = Linear(d_model, d_model, device=device, dtype=dtype)
-        self.w_k = Linear(d_model, d_model, device=device, dtype=dtype)
-        self.w_v = Linear(d_model, d_model, device=device, dtype=dtype)
+        self.w_k = Linear(
+            d_model, self.num_kv_heads * self.dim_head, device=device, dtype=dtype
+        )
+        self.w_v = Linear(
+            d_model, self.num_kv_heads * self.dim_head, device=device, dtype=dtype
+        )
         self.w_o = Linear(d_model, d_model, device=device, dtype=dtype)
         self.causal = causal
         self.rope = RotaryPositionalEmbedding(
             theta=10000.0,
-            d_k=self.dim_head,
+            dim_head=self.dim_head,
             max_seq_len=max_len_seq,
             device=device,
             dtype=dtype,
@@ -233,13 +244,13 @@ class MultiHeadSelfAttention(nn.Module):
             k_new = rearrange(
                 k_new,
                 "batch len_seq (n_heads d_head) -> batch n_heads len_seq d_head",
-                n_heads=self.num_heads,
+                n_heads=self.num_kv_heads,
                 d_head=self.dim_head,
             )
             v_new = rearrange(
                 v_new,
                 "batch len_seq (n_heads d_head) -> batch n_heads len_seq d_head",
-                n_heads=self.num_heads,
+                n_heads=self.num_kv_heads,
                 d_head=self.dim_head,
             )
 
@@ -265,18 +276,22 @@ class MultiHeadSelfAttention(nn.Module):
             k = rearrange(
                 k,
                 "batch len_seq (n_heads d_head) -> batch n_heads len_seq d_head",
-                n_heads=self.num_heads,
+                n_heads=self.num_kv_heads,
                 d_head=self.dim_head,
             )
             v = rearrange(
                 v,
                 "batch len_seq (n_heads d_head) -> batch n_heads len_seq d_head",
-                n_heads=self.num_heads,
+                n_heads=self.num_kv_heads,
                 d_head=self.dim_head,
             )
 
             q = self.rope(q)
             k = self.rope(k)
+
+        if self.num_kv_heads != self.num_heads:
+            k = k.repeat_interleave(self.num_groups, dim=-3)
+            v = v.repeat_interleave(self.num_groups, dim=-3)
 
         attn_mask = None
 
@@ -313,6 +328,7 @@ class TransformerBlock(nn.Module):
         d_model: int,
         num_heads: int,
         max_len_seq: int,
+        num_kv_heads: int | None = None,
         d_ff: int | None = None,
         device=None,
         dtype=None,
@@ -320,12 +336,14 @@ class TransformerBlock(nn.Module):
         super().__init__()
         self.d_model = d_model
         self.num_heads = num_heads
+        self.num_kv_heads = num_kv_heads
         self.d_ff = d_ff
 
         self.norm_1 = RMSNorm(d_model, device=device, dtype=dtype)
         self.causal_mha = MultiHeadSelfAttention(
             d_model,
             num_heads,
+            num_kv_heads=num_kv_heads,
             max_len_seq=max_len_seq,
             causal=True,
             device=device,
@@ -357,6 +375,7 @@ class TransformerLM(nn.Module):
         num_layers: int,
         d_model: int,
         num_heads: int,
+        num_kv_heads: int | None = None,
         d_ff: int | None = None,
         device=None,
         dtype=None,
@@ -368,6 +387,7 @@ class TransformerLM(nn.Module):
         self.max_seq_len = max_seq_len
         self.d_model = d_model
         self.num_heads = num_heads
+        self.num_kv_heads = num_kv_heads
         self.d_ff = d_ff
 
         self.embedding = Embedding(
@@ -381,6 +401,7 @@ class TransformerLM(nn.Module):
                 TransformerBlock(
                     d_model=d_model,
                     num_heads=num_heads,
+                    num_kv_heads=num_kv_heads,
                     max_len_seq=max_seq_len,
                     d_ff=d_ff,
                     device=device,
