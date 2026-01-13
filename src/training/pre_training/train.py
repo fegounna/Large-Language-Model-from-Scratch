@@ -3,11 +3,10 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 import os
 import torch
 from dataclasses import dataclass
-import math
 import numpy as np
 
 from model.architecture import TransformerLM
-from training.trainning_utils import cross_entropy, cosine_annealing_lr_schedule
+from training.trainning_utils import cross_entropy, cosine_annealing_lr_schedule,gradient_clipping,AdamW
 
 ddp = int(os.environ.get("RANK", -1)) != -1
 
@@ -85,7 +84,7 @@ torch.compile(model)
 if ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
 
-optimizer = torch.optim.AdamW(params=model.parameters, weight_decay=cfg.weight_decay)
+optimizer = AdamW(params=model.parameters, weight_decay=cfg.weight_decay)
 
 for step in range(cfg.max_steps):
     for micro_step in range(cfg.grad_accum_steps):
@@ -100,7 +99,7 @@ for step in range(cfg.max_steps):
                 )
             loss.backward()
 
-    norm = torch.nn.utils.clip_grad_norm_(model.parameters, cfg.gradient_clipping)
+    norm = gradient_clipping(model.parameters, cfg.gradient_clipping)
     lr = cosine_annealing_lr_schedule(
         step,
         alpha_max=cfg.max_lr,
