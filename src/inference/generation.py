@@ -32,7 +32,7 @@ def top_p_sampling(
         sorted, indices = torch.sort(probas, dim=-1, descending=True)
         cumSum = torch.cumsum(sorted, dim=-1, dtype=sorted.dtype)
 
-        mask = cumSum <= p
+        mask = (cumSum - sorted) < p
 
         selected_proba = mask * sorted
         selected_proba = selected_proba / selected_proba.sum(dim=-1, keepdim=True)
